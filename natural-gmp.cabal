@@ -1,0 +1,27 @@
+name:           natural-gmp
+cabal-version:  >=1.6
+build-type:     Custom
+version:        0.0.1
+license:        BSD3
+license-file:   LICENSE
+maintainer:     pumpkingod@gmail.com
+synopsis:       Naturals based on GMP's low-level mpn functions
+description:
+    This package contains a Natural type built on GMP's naturals. 
+
+extra-source-files:
+  cbits/float.c
+  cbits/alloc.c
+  cbits/longlong.c
+
+
+Library
+  build-depends:   ghc-prim, base, integer-gmp
+  exposed-modules: GHC.Natural
+                   GHC.Natural.GMP.Internals
+                   GHC.Natural.Lazy
+  other-modules:   GHC.Natural.Type
+  extensions:      CPP, MagicHash, UnboxedTuples, NoImplicitPrelude,
+                   ForeignFunctionInterface, UnliftedFFITypes
+  c-sources:       cbits/cbits.c, cbits/gmp-wrappers.cmm
+  include-dirs:    dist/include/

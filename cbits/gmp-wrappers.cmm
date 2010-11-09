@@ -1,0 +1,458 @@
+#include "Cmm.h"
+#include "GmpDerivedConstants.h"
+
+import "natural-gmp" __gmpn_add_n;
+import "natural-gmp" __gmpn_add_1;
+import "natural-gmp" __gmpn_add;
+
+import "natural-gmp" __gmpn_sub_n;
+import "natural-gmp" __gmpn_sub_1;
+import "natural-gmp" __gmpn_sub;
+
+import "natural-gmp" __gmpn_mul_n;
+import "natural-gmp" __gmpn_mul_1;
+import "natural-gmp" __gmpn_mul;
+
+import "natural-gmp" __gmpn_sqr_n;
+
+import "natural-gmp" __gmpn_addmul_1;
+import "natural-gmp" __gmpn_submul_1;
+
+import "natural-gmp" __gmpn_tdiv_qr;
+import "natural-gmp" __gmpn_divrem_1;
+import "natural-gmp" __gmpn_divmod_1;
+
+import "natural-gmp" __gmpn_divexact_by3;
+import "natural-gmp" __gmpn_divexact_by3c;
+
+import "natural-gmp" __gmpn_mod_1;
+import "natural-gmp" __gmpn_bdivmod;
+
+import "natural-gmp" __gmpn_lshift;
+import "natural-gmp" __gmpn_rshift;
+
+import "natural-gmp" __gmpn_cmp;
+import "natural-gmp" __gmpn_gcd;
+import "natural-gmp" __gmpn_gcd_1;
+import "natural-gmp" __gmpn_gcdext;
+
+import "natural-gmp" __gmpn_sqrtrem;
+
+import "natural-gmp" __gmpn_get_str;
+import "natural-gmp" __gmpn_set_str;
+
+import "natural-gmp" __gmpn_scan0;
+import "natural-gmp" __gmpn_scan1;
+
+import "natural-gmp" __gmpn_popcount;
+
+import "natural-gmp" __gmpn_hamdist;
+
+import "natural-gmp" __gmpn_perfect_square_p;
+
+import "natural-gmp" wordeger_cbits_decodeDouble;
+
+
+
+/* -----------------------------------------------------------------------------
+   Arbitrary-precision Natural operations.
+
+   There are some assumptions in this code that mp_limb_t == W_.  This is
+   the case for all the platforms that GHC supports, currently.
+   -------------------------------------------------------------------------- */
+
+natural_cmm_word2Naturalzh
+{
+   /* arguments: R1 = Word# */
+
+   W_ val, s, p; /* to avoid aliasing */
+
+   val = R1;
+
+   ALLOC_PRIM( SIZEOF_StgArrWords + WDS(1), NO_PTRS, natural_cmm_word2Naturalzh);
+
+   p = Hp - SIZEOF_StgArrWords;
+   SET_HDR(p, stg_ARR_WORDS_info, W_[CCCS]);
+   StgArrWords_bytes(p) = SIZEOF_W;
+
+   if (val != 0) {
+        s = 1;
+        W_[Hp] = val;
+   } else {
+        s = 0;
+   }
+
+   /* returns (# size  :: Word#,
+                 data  :: ByteArray# #)
+   */
+   RET_NP(s,p);
+}
+
+
+/*
+ * 'long long' primops for converting to/from Naturals.
+ */
+
+#if WORD_SIZE_IN_BITS < 64
+
+natural_cmm_word64ToNaturalzh
+{
+   /* arguments: L1 = Word64# */
+
+   L_ val;
+   W_ hi, lo, s, words_needed, p;
+
+   val = L1;
+   hi = TO_W_(val >> 32);
+   lo = TO_W_(val);
+
+   if ( hi != 0 ) {
+      words_needed = 2;
+   } else {
+      words_needed = 1;
+   }
+
+   ALLOC_PRIM( SIZEOF_StgArrWords + WDS(words_needed),
+               NO_PTRS, natural_cmm_word64ToNaturalzh );
+
+   p = Hp - SIZEOF_StgArrWords - WDS(words_needed) + WDS(1);
+   SET_HDR(p, stg_ARR_WORDS_info, W_[CCCS]);
+   StgArrWords_bytes(p) = WDS(words_needed);
+
+   if ( hi != 0 ) {
+     s = 2;
+     Hp(-1) = lo;
+     Hp(0)  = hi;
+   } else {
+      if ( lo != 0 ) {
+        s = 1;
+        Hp(0) = lo;
+     } else /* val==0 */  {
+      s = 0;
+     }
+  }
+
+   /* returns (# size  :: Word#,
+                 data  :: ByteArray# #)
+   */
+   RET_NP(s,p);
+}
+
+#endif /* WORD_SIZE_IN_BITS < 64 */
+
+#define GMP_TAKE2_RET1(name,mp_fun)                                     \
+name                                                                    \
+{                                                                       \
+  CInt s1, s2;                                                          \
+  W_ d1, d2;                                                            \
+  W_ mp_tmp1;                                                           \
+  W_ mp_tmp2;                                                           \
+  W_ mp_result1;                                                        \
+                                                                        \
+  /* call doYouWantToGC() */                                            \
+  MAYBE_GC(R2_PTR & R4_PTR, name);                                      \
+                                                                        \
+  STK_CHK_GEN( 3 * SIZEOF_MP_INT, R2_PTR & R4_PTR, name );              \
+                                                                        \
+  s1 = W_TO_INT(R1);                                                    \
+  d1 = R2;                                                              \
+  s2 = W_TO_INT(R3);                                                    \
+  d2 = R4;                                                              \
+                                                                        \
+  mp_tmp1    = Sp - 1 * SIZEOF_MP_INT;                                  \
+  mp_tmp2    = Sp - 2 * SIZEOF_MP_INT;                                  \
+  mp_result1 = Sp - 3 * SIZEOF_MP_INT;                                  \
+  MP_INT__mp_alloc(mp_tmp1) = W_TO_INT(BYTE_ARR_WDS(d1));               \
+  MP_INT__mp_size(mp_tmp1)  = (s1);                                     \
+  MP_INT__mp_d(mp_tmp1)     = BYTE_ARR_CTS(d1);                         \
+  MP_INT__mp_alloc(mp_tmp2) = W_TO_INT(BYTE_ARR_WDS(d2));               \
+  MP_INT__mp_size(mp_tmp2)  = (s2);                                     \
+  MP_INT__mp_d(mp_tmp2)     = BYTE_ARR_CTS(d2);                         \
+                                                                        \
+  foreign "C" __gmpz_init(mp_result1 "ptr") [];                         \
+                                                                        \
+  /* Perform the operation */                                           \
+  foreign "C" mp_fun(mp_result1 "ptr",mp_tmp1  "ptr",mp_tmp2  "ptr") []; \
+                                                                        \
+  RET_NP(TO_W_(MP_INT__mp_size(mp_result1)),                            \
+         MP_INT__mp_d(mp_result1) - SIZEOF_StgArrWords);                \
+}
+
+#define GMP_TAKE1_UL1_RET1(name,mp_fun)                                 \
+name                                                                    \
+{                                                                       \
+  CInt s1;                                                              \
+  W_ d1;                                                                \
+  CLong ul;                                                             \
+  W_ mp_tmp;                                                            \
+  W_ mp_result;                                                         \
+                                                                        \
+  /* call doYouWantToGC() */                                            \
+  MAYBE_GC(R2_PTR, name);                                               \
+                                                                        \
+  STK_CHK_GEN( 2 * SIZEOF_MP_INT, R2_PTR, name );                       \
+                                                                        \
+  s1 = W_TO_INT(R1);                                                    \
+  d1 = R2;                                                              \
+  ul = R3;                                                              \
+                                                                        \
+  mp_tmp     = Sp - 1 * SIZEOF_MP_INT;                                  \
+  mp_result  = Sp - 2 * SIZEOF_MP_INT;                                  \
+  MP_INT__mp_alloc(mp_tmp) = W_TO_INT(BYTE_ARR_WDS(d1));                \
+  MP_INT__mp_size(mp_tmp)  = (s1);                                      \
+  MP_INT__mp_d(mp_tmp)     = BYTE_ARR_CTS(d1);                          \
+                                                                        \
+  foreign "C" __gmpz_init(mp_result "ptr") [];                          \
+                                                                        \
+  /* Perform the operation */                                           \
+  foreign "C" mp_fun(mp_result "ptr",mp_tmp "ptr", ul) [];              \
+                                                                        \
+  RET_NP(TO_W_(MP_INT__mp_size(mp_result)),                             \
+         MP_INT__mp_d(mp_result) - SIZEOF_StgArrWords);                 \
+}
+
+#define GMP_TAKE1_RET1(name,mp_fun)                                     \
+name                                                                    \
+{                                                                       \
+  CInt s1;                                                              \
+  W_ d1;                                                                \
+  W_ mp_tmp1;                                                           \
+  W_ mp_result1;                                                        \
+                                                                        \
+  /* call doYouWantToGC() */                                            \
+  MAYBE_GC(R2_PTR, name);                                               \
+                                                                        \
+  STK_CHK_GEN( 2 * SIZEOF_MP_INT, R2_PTR, name );                       \
+                                                                        \
+  d1 = R2;                                                              \
+  s1 = W_TO_INT(R1);                                                    \
+                                                                        \
+  mp_tmp1    = Sp - 1 * SIZEOF_MP_INT;                                  \
+  mp_result1 = Sp - 2 * SIZEOF_MP_INT;                                  \
+  MP_INT__mp_alloc(mp_tmp1)     = W_TO_INT(BYTE_ARR_WDS(d1));           \
+  MP_INT__mp_size(mp_tmp1)      = (s1);                                 \
+  MP_INT__mp_d(mp_tmp1)         = BYTE_ARR_CTS(d1);                     \
+                                                                        \
+  foreign "C" __gmpz_init(mp_result1 "ptr") [];                         \
+                                                                        \
+  /* Perform the operation */                                           \
+  foreign "C" mp_fun(mp_result1 "ptr",mp_tmp1 "ptr") [];                \
+                                                                        \
+  RET_NP(TO_W_(MP_INT__mp_size(mp_result1)),                            \
+         MP_INT__mp_d(mp_result1) - SIZEOF_StgArrWords);                \
+}
+
+#define GMP_TAKE2_RET2(name,mp_fun)                                                     \
+name                                                                                    \
+{                                                                                       \
+  CInt s1, s2;                                                                          \
+  W_ d1, d2;                                                                            \
+  W_ mp_tmp1;                                                                           \
+  W_ mp_tmp2;                                                                           \
+  W_ mp_result1;                                                                        \
+  W_ mp_result2;                                                                        \
+                                                                                        \
+  /* call doYouWantToGC() */                                                            \
+  MAYBE_GC(R2_PTR & R4_PTR, name);                                                      \
+                                                                                        \
+  STK_CHK_GEN( 4 * SIZEOF_MP_INT, R2_PTR & R4_PTR, name );                              \
+                                                                                        \
+  s1 = W_TO_INT(R1);                                                                    \
+  d1 = R2;                                                                              \
+  s2 = W_TO_INT(R3);                                                                    \
+  d2 = R4;                                                                              \
+                                                                                        \
+  mp_tmp1    = Sp - 1 * SIZEOF_MP_INT;                                                  \
+  mp_tmp2    = Sp - 2 * SIZEOF_MP_INT;                                                  \
+  mp_result1 = Sp - 3 * SIZEOF_MP_INT;                                                  \
+  mp_result2 = Sp - 4 * SIZEOF_MP_INT;                                                  \
+  MP_INT__mp_alloc(mp_tmp1)     = W_TO_INT(BYTE_ARR_WDS(d1));                           \
+  MP_INT__mp_size(mp_tmp1)      = (s1);                                                 \
+  MP_INT__mp_d(mp_tmp1)         = BYTE_ARR_CTS(d1);                                     \
+  MP_INT__mp_alloc(mp_tmp2)     = W_TO_INT(BYTE_ARR_WDS(d2));                           \
+  MP_INT__mp_size(mp_tmp2)      = (s2);                                                 \
+  MP_INT__mp_d(mp_tmp2)         = BYTE_ARR_CTS(d2);                                     \
+                                                                                        \
+  foreign "C" __gmpz_init(mp_result1 "ptr") [];                                         \
+  foreign "C" __gmpz_init(mp_result2 "ptr") [];                                         \
+                                                                                        \
+  /* Perform the operation */                                                           \
+  foreign "C" mp_fun(mp_result1 "ptr",mp_result2 "ptr",mp_tmp1 "ptr",mp_tmp2 "ptr") []; \
+                                                                                        \
+  RET_NPNP(TO_W_(MP_INT__mp_size(mp_result1)),                                          \
+           MP_INT__mp_d(mp_result1) - SIZEOF_StgArrWords,                               \
+           TO_W_(MP_INT__mp_size(mp_result2)),                                          \
+           MP_INT__mp_d(mp_result2) - SIZEOF_StgArrWords);                              \
+}
+
+GMP_TAKE2_RET1(natural_cmm_plusNaturalzh,     __gmpz_add)
+GMP_TAKE2_RET1(natural_cmm_minusNaturalzh,    __gmpz_sub)
+GMP_TAKE2_RET1(natural_cmm_timesNaturalzh,    __gmpz_mul)
+GMP_TAKE2_RET1(natural_cmm_gcdNaturalzh,      __gmpz_gcd)
+GMP_TAKE2_RET1(natural_cmm_quotNaturalzh,     __gmpz_tdiv_q)
+GMP_TAKE2_RET1(natural_cmm_remNaturalzh,      __gmpz_tdiv_r)
+GMP_TAKE2_RET1(natural_cmm_divExactNaturalzh, __gmpz_divexact)
+GMP_TAKE2_RET1(natural_cmm_andNaturalzh,      __gmpz_and)
+GMP_TAKE2_RET1(natural_cmm_orNaturalzh,       __gmpz_ior)
+GMP_TAKE2_RET1(natural_cmm_xorNaturalzh,      __gmpz_xor)
+GMP_TAKE1_UL1_RET1(natural_cmm_mul2ExpNaturalzh, __gmpz_mul_2exp)
+GMP_TAKE1_UL1_RET1(natural_cmm_fdivQ2ExpNaturalzh, __gmpz_fdiv_q_2exp)
+GMP_TAKE1_RET1(natural_cmm_complementNaturalzh, __gmpz_com)
+
+GMP_TAKE2_RET2(natural_cmm_quotRemNaturalzh, __gmpz_tdiv_qr)
+GMP_TAKE2_RET2(natural_cmm_divModNaturalzh,  __gmpz_fdiv_qr)
+
+natural_cmm_gcdWordzh
+{
+    /* R1 = the first Word#; R2 = the second Word# */
+    W_ r;
+    W_ mp_tmp_w;
+
+    STK_CHK_GEN( 1 * SIZEOF_MP_INT, NO_PTRS, natural_cmm_gcdWordzh );
+
+    mp_tmp_w = Sp - 1 * SIZEOF_MP_INT;
+
+    W_[mp_tmp_w] = R1;
+    (r) = foreign "C" __gmpn_gcd_1(mp_tmp_w "ptr", 1, R2) [];
+
+    R1 = r;
+    /* Result parked in R1, return via info-poworder at TOS */
+    jump %ENTRY_CODE(Sp(0));
+}
+
+
+natural_cmm_gcdNaturalWordzh
+{
+    /* R1 = s1; R2 = d1; R3 = the word */
+    W_ s1;
+    (s1) = foreign "C" __gmpn_gcd_1( BYTE_ARR_CTS(R2) "ptr", R1, R3) [];
+    R1 = s1;
+
+    /* Result parked in R1, return via info-poworder at TOS */
+    jump %ENTRY_CODE(Sp(0));
+}
+
+
+natural_cmm_cmpNaturalWordzh
+{
+    /* R1 = s1; R2 = d1; R3 = the word */
+    W_ usize, vsize, v_digit, u_digit;
+
+    usize = R1;
+    vsize = 0;
+    v_digit = R3;
+
+    // paraphrased from __gmpz_cmp_si() in the GMP sources
+    if (%gt(v_digit,0)) {
+        vsize = 1;
+    } else {
+        if (%lt(v_digit,0)) {
+            vsize = -1;
+            v_digit = -v_digit;
+        }
+    }
+
+    if (usize != vsize) {
+        R1 = usize - vsize;
+        jump %ENTRY_CODE(Sp(0));
+    }
+
+    if (usize == 0) {
+        R1 = 0;
+        jump %ENTRY_CODE(Sp(0));
+    }
+
+    u_digit = W_[BYTE_ARR_CTS(R2)];
+
+    if (u_digit == v_digit) {
+        R1 = 0;
+        jump %ENTRY_CODE(Sp(0));
+    }
+
+    if (%gtu(u_digit,v_digit)) { // NB. unsigned: these are mp_limb_t's
+        R1 = usize;
+    } else {
+        R1 = -usize;
+    }
+
+    jump %ENTRY_CODE(Sp(0));
+}
+
+natural_cmm_cmpNaturalzh
+{
+    /* R1 = s1; R2 = d1; R3 = s2; R4 = d2 */
+    W_ usize, vsize, size, up, vp;
+    CInt cmp;
+
+    // paraphrased from __gmpz_cmp() in the GMP sources
+    usize = R1;
+    vsize = R3;
+
+    if (usize != vsize) {
+        R1 = usize - vsize;
+        jump %ENTRY_CODE(Sp(0));
+    }
+
+    if (usize == 0) {
+        R1 = 0;
+        jump %ENTRY_CODE(Sp(0));
+    }
+
+    if (%lt(usize,0)) { // NB. not <, which is unsigned
+        size = -usize;
+    } else {
+        size = usize;
+    }
+
+    up = BYTE_ARR_CTS(R2);
+    vp = BYTE_ARR_CTS(R4);
+
+    (cmp) = foreign "C" __gmpn_cmp(up "ptr", vp "ptr", size) [];
+
+    if (cmp == 0 :: CInt) {
+        R1 = 0;
+        jump %ENTRY_CODE(Sp(0));
+    }
+
+    if (%lt(cmp,0 :: CInt) == %lt(usize,0)) {
+        R1 = 1;
+    } else {
+        R1 = (-1);
+    }
+    /* Result parked in R1, return via info-poworder at TOS */
+    jump %ENTRY_CODE(Sp(0));
+}
+
+#define DOUBLE_MANTISSA_SIZE SIZEOF_DOUBLE
+#define ARR_SIZE (SIZEOF_StgArrWords + DOUBLE_MANTISSA_SIZE)
+
+natural_cmm_decodeDoublezh
+{
+    D_ arg;
+    W_ p;
+    W_ mp_tmp1;
+    W_ mp_tmp_w;
+
+    STK_CHK_GEN( 2 * SIZEOF_MP_INT, NO_PTRS, natural_cmm_decodeDoublezh );
+
+    mp_tmp1  = Sp - 1 * SIZEOF_MP_INT;
+    mp_tmp_w = Sp - 2 * SIZEOF_MP_INT;
+
+    /* arguments: D1 = Double# */
+    arg = D1;
+
+    ALLOC_PRIM( ARR_SIZE, NO_PTRS, natural_cmm_decodeDoublezh );
+
+    /* Be prepared to tell Lennart-coded wordeger_cbits_decodeDouble
+       where mantissa.d can be put (it does not care about the rest) */
+    p = Hp - ARR_SIZE + WDS(1);
+    SET_HDR(p, stg_ARR_WORDS_info, W_[CCCS]);
+    StgArrWords_bytes(p) = DOUBLE_MANTISSA_SIZE;
+    MP_INT__mp_d(mp_tmp1) = BYTE_ARR_CTS(p);
+
+    /* Perform the operation */
+    foreign "C" natural_cbits_decodeDouble(mp_tmp1 "ptr", mp_tmp_w "ptr",arg) [];
+
+    /* returns: (Word# (expn), Word#, ByteArray#) */
+    RET_NNP(W_[mp_tmp_w], TO_W_(MP_INT__mp_size(mp_tmp1)), p);
+}

@@ -1,0 +1,1 @@
+Currently gmp-wrappers.cmm is almost identical to the integer-gmp version, as our representations are mostly compatible. This will change once I get a benchmark suite and can evaluate how much gain comes from specialized mpn-based versions that don't need to worry about signs.

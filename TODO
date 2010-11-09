@@ -1,0 +1,6 @@
+- Don't hardcode 32-bit assumptions in the build script
+- Decide what to do with negativity! Silent bugs right now
+- Move away from the mpz wrappers and write simpler mpn wrappers
+- Decide how to do the lazy natural stuff nicely
+- Tests
+- Benchmarks
